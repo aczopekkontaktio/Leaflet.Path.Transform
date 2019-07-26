@@ -13,10 +13,11 @@ L.PathTransform = {};
  * @return {L.Point}
  */
 L.PathTransform.pointOnLine = function(start, final, distPx) {
-  var ratio = 1 + distPx / start.distanceTo(final);
+  var distanceTo = start.distanceTo(final) || 10; // sometimes distance is so small that we have dividing by 0 below
+  var ratio = 1 + distPx / distanceTo;
   return new L.Point(
-    start.x + (final.x - start.x) * ratio,
-    start.y + (final.y - start.y) * ratio
+      start.x + (final.x - start.x) * ratio,
+      start.y + (final.y - start.y) * ratio
   );
 };
 
@@ -47,7 +48,7 @@ L.PathTransform.merge = function() {
       val = obj[key];
 
       if (isObject(val) && isObject(target[key])){
-        target[key] = L.Util.merge(target[key], val);
+        target[key] = L.Util.extend(target[key], val);
       } else {
         target[key] = val;
       }

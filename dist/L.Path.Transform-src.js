@@ -585,10 +585,11 @@ L.PathTransform = {};
  * @return {L.Point}
  */
 L.PathTransform.pointOnLine = function(start, final, distPx) {
-  var ratio = 1 + distPx / start.distanceTo(final);
+  var distanceTo = start.distanceTo(final) || 10; // sometimes distance is so small that we have dividing by 0 below
+  var ratio = 1 + distPx / distanceTo;
   return new L.Point(
-    start.x + (final.x - start.x) * ratio,
-    start.y + (final.y - start.y) * ratio
+      start.x + (final.x - start.x) * ratio,
+      start.y + (final.y - start.y) * ratio
   );
 };
 
@@ -619,7 +620,7 @@ L.PathTransform.merge = function() {
       val = obj[key];
 
       if (isObject(val) && isObject(target[key])){
-        target[key] = L.Util.merge(target[key], val);
+        target[key] = L.Util.extend(target[key], val);
       } else {
         target[key] = val;
       }
@@ -848,6 +849,10 @@ L.PathTransform.Handle = L.CircleMarker.extend({
       this._path.style.cursor = L.PathTransform.Handle.CursorsByType[
         this.options.index
       ];
+
+      if (L.Util.isArray(this.options.hideMarkers) && this.options.hideMarkers.includes(this.options.index)) {
+        this._path.style.display = 'none';
+      }
     }
   }
 });
@@ -894,7 +899,9 @@ L.Handler.PathTransform = L.Handler.extend({
       fillOpacity: 1,
       weight:      2,
       opacity:     0.7,
-      setCursor:   true
+      setCursor:   true,
+      hideMarkers: [],
+      onlyPlusScale: false
     },
 
     // rectangle
@@ -903,14 +910,16 @@ L.Handler.PathTransform = L.Handler.extend({
       opacity:   1,
       dashArray: [3, 3],
       fill:      false,
-      noClip:    true
+      noClip:    true,
+      shapeAsPolygon: false
     },
 
     // rotation handler
     rotateHandleOptions: {
       weight:    1,
       opacity:   1,
-      setCursor: true
+      setCursor: true,
+      originCorner: null
     },
     // rotation handle length
     handleLength: 20,
@@ -1300,13 +1309,14 @@ L.Handler.PathTransform = L.Handler.extend({
     this._rect = this._rect ||
                  this._getBoundingPolygon().addTo(this._handlersGroup);
 
+    this._handlers = [];
+
     if (this.options.scaling) {
-      this._handlers = [];
       for (var i = 0; i < this.options.edgesCount; i++) {
         // TODO: add stretching
         this._handlers.push(
-          this._createHandler(this._rect._latlngs[0][i], i * 2, i)
-          .addTo(this._handlersGroup));
+            this._createHandler(this._rect._latlngs[0][i], i * 2, i)
+                .addTo(this._handlersGroup));
       }
     }
 
@@ -1319,19 +1329,19 @@ L.Handler.PathTransform = L.Handler.extend({
 
 
   /**
-   * Rotation marker and small connectin handle
+   * Rotation marker and small connection handle
    */
   _createRotationHandlers: function() {
     var map     = this._map;
     var latlngs = this._rect._latlngs[0];
 
     var bottom   = new L.LatLng(
-      (latlngs[0].lat + latlngs[3].lat) / 2,
-      (latlngs[0].lng + latlngs[3].lng) / 2);
+      (latlngs[2].lat + latlngs[3].lat) / 2,
+      (latlngs[2].lng + latlngs[3].lng) / 2);
     // hehe, top is a reserved word
     var topPoint = new L.LatLng(
-      (latlngs[1].lat + latlngs[2].lat) / 2,
-      (latlngs[1].lng + latlngs[2].lng) / 2);
+      (latlngs[0].lat + latlngs[1].lat) / 2,
+      (latlngs[0].lng + latlngs[1].lng) / 2);
 
     var handlerPosition = map.layerPointToLatLng(
       L.PathTransform.pointOnLine(
@@ -1361,13 +1371,18 @@ L.Handler.PathTransform = L.Handler.extend({
    * @return {L.LatLng}
    */
   _getRotationOrigin: function() {
+    var corner = this.options.rotateHandleOptions.originCorner;
+    if (corner != null && !isNaN(corner)) {
+      return this._rect._latlngs[0][corner];
+    }
+
     var latlngs = this._rect._latlngs[0];
     var lb = latlngs[0];
     var rt = latlngs[2];
 
     return new L.LatLng(
-      (lb.lat + rt.lat) / 2,
-      (lb.lng + rt.lng) / 2
+        (lb.lat + rt.lat) / 2,
+        (lb.lng + rt.lng) / 2
     );
   },
 
@@ -1382,7 +1397,8 @@ L.Handler.PathTransform = L.Handler.extend({
     map.dragging.disable();
 
     this._originMarker     = null;
-    this._rotationOriginPt = map.latLngToLayerPoint(this._getRotationOrigin());
+    this._rotationOrigin   = this._getRotationOrigin();
+    this._rotationOriginPt = map.latLngToLayerPoint(this._rotationOrigin);
     this._rotationStart    = evt.layerPoint;
     this._initialMatrix    = this._matrix.clone();
 
@@ -1462,8 +1478,12 @@ L.Handler.PathTransform = L.Handler.extend({
       .fire('transformstart', { layer: this._path })
       .fire('scalestart', { layer: this._path, scale: L.point(1, 1) });
 
-    this._map.removeLayer(this._handleLine);
-    this._map.removeLayer(this._rotationMarker);
+    if (this._handleLine) {
+      this._map.removeLayer(this._handleLine);
+    }
+    if (this._rotationMarker) {
+      this._map.removeLayer(this._rotationMarker);
+    }
 
     //this._handleLine = this._rotationMarker = null;
   },
@@ -1505,8 +1525,18 @@ L.Handler.PathTransform = L.Handler.extend({
       .off('mousemove', this._onScale,    this)
       .off('mouseup',   this._onScaleEnd, this);
 
-    this._map.addLayer(this._handleLine);
-    this._map.addLayer(this._rotationMarker);
+    if (this.options.handlerOptions.onlyPlusScale && (this._scale.x < 0 || this._scale.y < 0)) {
+      console.error('Wrong scale. If you want to change relative points by scaling you need to set handlerOptions.onlyPlusScale as false');;
+      this._scale.x = 1;
+      this._scale.y = 1;
+    }
+
+    if (this._handleLine) {
+      this._map.addLayer(this._handleLine);
+    }
+    if (this._rotationMarker) {
+      this._map.addLayer(this._rotationMarker);
+    }
 
     this._apply();
     this._path.fire('scaleend', {
@@ -1532,14 +1562,25 @@ L.Handler.PathTransform = L.Handler.extend({
    * Bounding polygon
    * @return {L.Polygon}
    */
-  _getBoundingPolygon: function() {
+  _getBoundingPolygon: function () {
+    if (this.options.boundsOptions.shapeAsPolygon && this._path._latlngs[0].length === 4) {
+      var ll = this._path._latlngs[0];
+      var polygon = [];
+      for (var i = 0; i < ll.length; i++) {
+        polygon.push(ll[i]);
+      }
+
+      // last polygon point must be the same as a first one
+      polygon.push(ll[0]);
+      return new L.Polygon(polygon, this.options.boundsOptions);
+    }
+
     if (this._rectShape) {
       return L.GeoJSON.geometryToLayer(
-        this._rectShape, this.options.boundsOptions);
-    } else {
-      return new L.Rectangle(
-        this._path.getBounds(), this.options.boundsOptions);
+          this._rectShape, this.options.boundsOptions);
     }
+
+    return new L.Rectangle(this._path.getBounds(), this.options.boundsOptions);
   },
 
 

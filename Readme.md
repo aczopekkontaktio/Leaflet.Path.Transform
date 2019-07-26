@@ -58,6 +58,12 @@ For the corner and rotation handles plugin provides 2 classes:
 
 Handler assigns `resize` cursors to handles. You can override that by setting `options.handlerOptions.setCursor` and `options.rotateHandleOptions.setCursor` to `false`
 
+**Added customized options:**
+
+- * **`options.handlerOptions.hideMarkers`** - **Array<Number>** - array which allows user to hide vertex to scale/resize object. By default array is empty which means that all vertexes are available.
+- * **`options.handlerOptions.onlyPlusScale`** - **Boolean** - enable/disable plus scaling (plus scaling means that all vertex are relatively in the same positions). If option is enabled and user wants to apply minus scale then polygon will return to the previous shape. By default false - means that you can use scale as you want.
+- * **`options.boundsOptions.shapeAsPolygon`**- **Boolean** - enable/disable drawing transform borders around polygon instead of drawing it as a rectangle around whole polygon. By default it is false which means that rectangle is being drawn.
+- * **`options.rotateHandleOptions.originCorner`** - **Number** - number which defines around which corner rotation should be applied. If no specified, polygon will be rotated around center of itself. By default null - rotation around center of polygon.
 
 ### Events
 
